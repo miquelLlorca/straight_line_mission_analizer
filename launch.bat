@@ -1,0 +1,1 @@
+python -m streamlit run gpx_analysis.py

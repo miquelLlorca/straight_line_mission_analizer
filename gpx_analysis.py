@@ -7,29 +7,95 @@ from pyproj import Geod
 from math import radians, degrees, atan2, sin, cos
 import streamlit as st
 from streamlit.components.v1 import html
-
+import plotly.express as px
 
 GEOD = Geod(ellps='WGS84')
+STEP = 10
+
+medal_color_map = {
+    '💎 Diamond (0-10 m)': '#03dffc',
+    '🏆 Platinum (10-25 m)': '#b5bcbd',
+    '🥇 Gold (25-50 m)': '#ffd230',
+    '🥈 Silver (50-75 m)': '#636363',
+    '🥉 Bronze (75-150 m)': '#ffac30',
+    '❌ Off Track (150-250 m)': '#ff4a21',
+    '💀 Absolutely lost (250 m+)': '#030303',
+}
+
+def get_color_from_dist(d):
+    if(d < 10):
+        return list(medal_color_map.values())[0]
+    elif(d < 25):
+        return list(medal_color_map.values())[1]
+    elif(d < 50):
+        return list(medal_color_map.values())[2]
+    elif(d < 75):
+        return list(medal_color_map.values())[3]
+    elif(d < 150):
+        return list(medal_color_map.values())[4]
+    elif(d < 250):
+        return list(medal_color_map.values())[5]
+    else:
+        return list(medal_color_map.values())[6]
 
 
-def get_color_from_dist(dist):
-    if(dist<10):
-        return 'blue'
-    if(dist<25):
-        return 'green'
-    if(dist<50):
-        return 'yellow'
-    if(dist<100):
-        return 'orange'
-    if(dist<250):
-        return 'red'
-    return 'black'
+def get_medal_by_dist(d):
+    if(d < 10):
+        return list(medal_color_map.keys())[0]
+    elif(d < 25):
+        return list(medal_color_map.keys())[1]
+    elif(d < 50):
+        return list(medal_color_map.keys())[2]
+    elif(d < 75):
+        return list(medal_color_map.keys())[3]
+    elif(d < 150):
+        return list(medal_color_map.keys())[4]
+    elif(d < 250):
+        return list(medal_color_map.keys())[5]
+    else:
+        return list(medal_color_map.keys())[6]
+    
+    
+def plot_medal_count_histogram(df):
+    df['medal'] = df['deviation'].apply(get_medal_by_dist)
+    df = df.dropna(subset=["medal"])
+    df['medal'] = pd.Categorical(
+        df['medal'],
+        categories=list(medal_color_map.keys()),
+        ordered=True
+    )
+    fig = px.histogram(
+        df,
+        x="medal",
+        color="medal",
+        category_orders={"medal": list(medal_color_map.keys())},
+        color_discrete_map=medal_color_map,
+    )
+
+    fig.update_layout(
+        title="Medal Category Counts",
+        xaxis_title="Medal Category",
+        yaxis_title="Number of Points",
+        showlegend=False
+    )
+
+    return fig
+
+
+
+
+
+
+
+
 
 
 
 class StraighLineAnalisys:
     m: folium.Map
     df: pd.DataFrame
+    dist_df: pd.DataFrame
+
 
     def __init__(self, path, line):
         self.real_gpx_path = path
@@ -116,24 +182,23 @@ class StraighLineAnalisys:
     def __get_distances(self):
         dists = []
         proj_points = []
-        step = 20
         for i, row in self.df.iterrows():
-            if(i%step==0):
+            if(i%STEP==0):
                 dist, proj_lat, proj_lon = self.__geodesic_cross_track_distance([row['lat'], row['lon']])
                 dists.append(dist)
                 proj_points.append((proj_lat, proj_lon))
                 # draw a line from the point to the line perpendicularly
-        return pd.DataFrame({
-            'lat': self.df.iloc[::step]['lat'].values,
-            'lon': self.df.iloc[::step]['lon'].values,
+        self.dist_df = pd.DataFrame({
+            'lat': self.df.iloc[::STEP]['lat'].values,
+            'lon': self.df.iloc[::STEP]['lon'].values,
             'deviation': dists,
             'proj_lat': [p[0] for p in proj_points],
             'proj_lon': [p[1] for p in proj_points]
         })
 
 
-    def __plot_dist_lines(self, df:pd.DataFrame):
-        for _, row in df.iterrows():
+    def __plot_dist_lines(self):
+        for _, row in self.dist_df.iterrows():
             folium.PolyLine(
                 [(row['lat'], row['lon']), (row['proj_lat'], row['proj_lon'])],
                 color=get_color_from_dist(row['deviation']),
@@ -141,27 +206,37 @@ class StraighLineAnalisys:
                 opacity=1
             ).add_to(self.m)
 
-    def __get_metrics(self, dist_df):
-        devs = dist_df['deviation']
-        print("Median deviation:", devs.median())
-        print("Mean deviation:", devs.mean())
-        print("Max deviation:", devs.max())
-        print("Std deviation:", devs.std())
-        print("95th percentile:", devs.quantile(0.95))
+    def write_metrics(self):
+        devs = self.dist_df['deviation']
+        st.text('Metrics')
+        value = devs.median()
+        st.text(f"Median deviation: {round(value,2)}m   {get_medal_by_dist(value)}")
+
+        value = devs.mean()
+        st.text(f"Mean deviation: {round(value,2)}m {get_medal_by_dist(value)}")
+
+        value = devs.max()
+        st.text(f"Max deviation: {round(value,2)}m  {get_medal_by_dist(value)}")
+
+        value = devs.std()
+        st.text(f"Std deviation: {round(value,2)}m  {get_medal_by_dist(value)}")
+
+        value = devs.quantile(0.95)
+        st.text(f"95th percentile: {round(value,2)}m    {get_medal_by_dist(value)}")
     
     def proccess_gpx(self):
         self.__load_gpx_as_df()
         self.__init_map()
         self.__plot_gpx_on_map()
         self.__plot_line_on_map()
-        dist_df = self.__get_distances()
-        self.__plot_dist_lines(dist_df)
-        self.__get_metrics(dist_df)
-
+        self.__get_distances()
+        self.__plot_dist_lines()
 
     def save_map(self):
         self.m.save(self.map_path)
         # webbrowser.open(self.map_path)
+    
+    def show_map(self):
         html(self.m._repr_html_(), height=900)
 
 challenges = [
@@ -179,12 +254,22 @@ challenges = [
 st.set_page_config(layout="wide")
 st.title("Straight Line Challenge Analyzer")
 
-challenge = 1
-real_gpx_path = challenges[challenge]['real_gpx_path']
-line = challenges[challenge]['line']
+challenge = st.selectbox(label='challenge_select', options=challenges)
+real_gpx_path = challenge['real_gpx_path']
+line = challenge['line']
 
+if(st.button(label='Analyze line')):
+    analiser = StraighLineAnalisys(real_gpx_path, line)
+    analiser.proccess_gpx()
+    analiser.save_map()
+    st.session_state['analiser'] = analiser
 
-analiser = StraighLineAnalisys(real_gpx_path, line)
-analiser.proccess_gpx()
-analiser.save_map()
+analiser = st.session_state.get('analiser', None)
+if(analiser):
+    analiser.show_map()
+    st.plotly_chart(
+        plot_medal_count_histogram(analiser.dist_df), 
+        use_container_width=True
+    )
 
+    analiser.write_metrics()
